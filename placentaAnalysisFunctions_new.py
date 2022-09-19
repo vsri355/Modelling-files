@@ -1,6 +1,6 @@
 import numpy as np
 from tabulate import tabulate
-from placentaAnalysis_utilities import *
+from placentaAnalysis_utilities_new import *
 import scipy
 import scipy.spatial
 from mpl_toolkits.mplot3d import Axes3D
