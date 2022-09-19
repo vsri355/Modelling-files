@@ -1,13 +1,139 @@
 import numpy as np
 from tabulate import tabulate
-from placentaAnalysis_utilities import *
-import scipy
-import scipy.spatial
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.pyplot as plt
-import math
-from ellipsoid import*
-from statistics import mean
+from placentaAnalysis_utilities_new import *
+
+######
+#Contains following functions for placenta analysis:
+#remove_multiple_elements
+#simplify_tree
+#remove_unconnected_nodes
+#sort_data
+#sort_elements
+#arrange_by_strahler_order
+#prune_by_order
+#find_branch_angles
+#summary_statistics
+######
+
+######
+# Function: Removes elements with more than 2 downstream elements by adding a new element of minimal length and
+#           reallocating down stream elements to this
+# Inputs: geom - structure containing node and element information, radii, length etc.
+#         elem_connect - structure containing information for up and downstream elements for each elem
+# Outputs: geom - updated structure with elements having a maximum of 2 downstream elements
+######
+
+def remove_multiple_elements(geom, elem_connect, type):
+    # unpackage information
+    max_down = check_multiple(elem_connect)
+
+    while max_down > 2:
+        elem_down = elem_connect['elem_down']
+        for ne in range(0, len(elem_down)):
+            if elem_down[ne][0] > 2:  # more than 2 connected downstream
+                if type == 'subtree':
+                    geom['nodes'], node2 = extend_node_subtree(ne, geom)  # create new node
+                    geom = update_elems(ne, node2, geom, elem_connect)  # create new element and update old
+                else:
+                    geom['nodes'], node2 = extend_node(ne, geom)  # create new node
+                    geom = update_elems(ne, node2, geom, elem_connect)  # create new element and update old
+        if type == 'subtree':
+            elem_connect = element_connectivity_1D_subtree(geom['nodes'], geom['elems'], 6)
+        else:
+            elem_connect = element_connectivity_1D(geom['nodes'], geom['elems'], 6)
+        max_down = check_multiple(elem_connect)
+    num_elems = len(geom['elems'])
+    elem_down = elem_connect['elem_down']
+    elem_up = elem_connect['elem_up']
+    geom['elem_down'] = elem_down[:,0:3]
+    geom['elem_up'] = elem_up[:,0:3]
+
+    return geom, elem_connect
+
+
+
+######
+# Function: Simplifies vascular tree to specified number of strahler orders
+# Inputs:	n - number of strahler orders to keep (higher orders are kept first)
+#			geom - contains elems, nodes and other properties of the skeleton
+#			Nc - maximum number of elements connected to a node
+# Outputs:	
+######
+
+def simplify_tree(n, geom, orders):
+	strahler=orders['strahler']
+	max_order=np.max(strahler)
+	index_orders=np.zeros(len(orders['strahler']))
+	
+	#remove orders starting from 1 to reach no. specified remaining
+	for i in range(1,max_order-n+1):
+		geom['elems'] = remove_indexed_row(geom['elems'], orders['strahler'],i)
+		geom['radii'] = remove_indexed_row(geom['radii'], orders['strahler'],i)
+		geom['length'] = remove_indexed_row(geom['length'], orders['strahler'],i)
+		geom['euclidean length'] = remove_indexed_row(geom['euclidean length'], orders['strahler'],i)
+		geom['branch_angles'] = remove_indexed_row(geom['branch_angles'], orders['strahler'],i)
+		geom['diam_ratio'] = remove_indexed_row(geom['diam_ratio'], orders['strahler'],i)
+		geom['length_ratio'] = remove_indexed_row(geom['length_ratio'], orders['strahler'],i)
+		
+		for j in range(0, len(orders['strahler'])):
+			if strahler[j]==i:
+				index_orders[j]=i
+		print (index_orders)
+		orders['strahler']=remove_indexed_row(orders['strahler'],index_orders,i)
+		orders['generation']=remove_indexed_row(orders['generation'],index_orders,i)
+	
+	#remove unconnected nodes from elements removed
+	Nc=find_maximum_joins(geom['elems'])
+	geom['nodes'],geom['elems']=remove_unconnected_nodes(geom['nodes'], geom['elems'], Nc)
+	
+	return geom, orders
+
+
+######
+# Function: Removes redundant nodes not connected to any element
+# Inputs:	node_loc - N x 3 array, with the (x, y, z) coordinates of node
+#			elems - an N x 3 array, the first column in the element number, the second two columns are the index of the start and end node
+#			Nc - maximum number of elements connected to a node
+# Outputs:	modified elems and node_loc arrays with redundant nodes removed and renumbered in elems
+######
+
+def remove_unconnected_nodes(nodes, elems):
+    print ('removing......')
+    num_elems = len(elems)
+    num_nodes = len(nodes)
+    redundant_i = []
+    # create copy as elements modified
+    new_elems = elems.copy()
+
+    print ('no elements:'), num_elems
+    print ('no nodes:'), num_nodes
+
+    # find redundant node indexes
+    for nn in range(1, num_nodes):  # go through all rows
+        (rows, cols) = np.where(elems[:, 1:] == nn)  # find associated elements with nodes
+        count = len(cols)
+        # print 'nn:', nn,'row_i:',places[0],'col_i:',places[1], 'len:', size
+        if count == 0:
+            redundant_i = np.append(redundant_i, nn)
+
+    print (len(redundant_i)), 'redundant nodes found:', redundant_i
+
+    # delete redundant nodes
+    new_nodes = np.delete(nodes, redundant_i, axis=0)
+
+    if (len(nodes[0])) == 3: #if 3 then update node numbers, else node numbers unchanged as given in nodes[:,0]
+        # demote node number if after a removed node
+        for i in range(0, len(redundant_i)):  # go through each redundant node
+            node = int(redundant_i[i])
+            for ne in range(0, num_elems):
+                n1 = elems[ne, 1]
+                n2 = elems[ne, 2]
+                if n1 > node:
+                    new_elems[ne, 1] = new_elems[ne, 1] - 1
+                if n2 > node:
+                    new_elems[ne, 2] = new_elems[ne, 2] - 1
+
+    return new_nodes, new_elems
 
 ######
 # Function: takes data from the csv and converts it to arrays
@@ -19,23 +145,24 @@ from statistics import mean
 ######
 
 def sort_data(data_file):
+
     # get rid of any skeletons other than the main one
-    data_file = data_file[data_file.SkeletonID == 1]
+    data_file=data_file[data_file.SkeletonID == 1]
 
     # get skeleton properties as arrays
-    euclid_length = data_file.Euclideandistance.values
+    euclid_length=data_file.Euclideandistance.values
     length = data_file.Branchlength.values
     radii = data_file.averageintensityinner3rd.values
 
     # get elem and node data
-    data_file = data_file.drop(['SkeletonID', 'Branchlength', 'averageintensityinner3rd', 'Euclideandistance'], axis=1)
-    data_file = data_file.values
-    (elems, nodes) = sort_elements(data_file[:, 0:3], data_file[:, 3:6])
+    data_file=data_file.drop(['SkeletonID','Branchlength','averageintensityinner3rd','Euclideandistance'], axis=1)
+    data_file=data_file.values
+    (elems, nodes) = sort_elements(data_file[:, 0:3],data_file[:,3:6])
 
     # get rid of dud elements
-    (elems, [length, euclid_length, radii]) = remove_rows(elems, [length, euclid_length, radii])
+    (elems, [length, euclid_length, radii])=remove_rows(elems, [length, euclid_length, radii])
 
-    return {'nodes': nodes, 'elems': elems, 'radii': radii, 'length': length, 'euclidean length': euclid_length}
+    return {'nodes': nodes, 'elems':elems, 'radii': radii, 'length': length, 'euclidean length': euclid_length}
 
 
 ######
@@ -48,29 +175,30 @@ def sort_data(data_file):
 ######
 
 def sort_elements(v1, v2):
-    Nelem = len(v1)
-    elems = np.zeros([Nelem, 3])
-    nodes = np.zeros([Nelem * 2, 3])  # max number of nodes possible
 
-    iN = 0  # node index
+    Nelem=len(v1)
+    elems = np.zeros([Nelem, 3])
+    nodes = np.zeros([Nelem*2, 3]) # max number of nodes possible
+
+    iN=0 # node index
 
     # go through first node list
     for iE in range(0, Nelem):
 
-        v = v1[iE, :]
-        index = is_member(v, nodes[0:iN][:])  # see if the node is in the nodes list
+        v=v1[iE,:]
+        index = is_member(v, nodes[0:iN][:]) # see if the node is in the nodes list
 
-        if index == -1:  # if not, create a new node
-            nodes[iN, :] = v
-            index = iN
-            iN = iN + 1
+        if index == -1: # if not, create a new node
+            nodes[iN, :]= v
+            index=iN
+            iN=iN+1
 
         # else just use index of existing node
-        elems[iE, 1] = int(index)
-        elems[iE, 0] = int(iE)  # first column of elements is just the element number
+        elems[iE,1] = int(index)
+        elems[iE, 0] = int(iE) # first column of elements is just the element number
 
     # go through second node list
-    for iE in range(0, Nelem):
+    for iE in range(0, Nelem ):
 
         v = v2[iE, :]
         index = is_member(v, nodes[0:iN, :])
@@ -82,78 +210,95 @@ def sort_elements(v1, v2):
 
         elems[iE, 2] = int(index)
 
-        if elems[iE][1] == elems[iE][2]:
-            elems[iE, 0:2] = int(-1)
+        if elems[iE][1]==elems[iE][2]:
+            elems[iE,0:2]=int(-1)
 
-    nodes = nodes[0:iN:1][:]  # truncate based on how many nodes were actually assigned
-
+    nodes = nodes[0:iN:1][:] # truncate based on how many nodes were actually assigned
     return (elems, nodes)
 
 
 ######
 # Function: rearranges elems (and corresponding properties) according to their strahler order, to be compatible with placentagen functions
 # Inputs: geom - contains elems, nodes and other properties of the skeleton
-#         inlet_loc - the coordinates of the parent node for the entire tree (if known)
-#         find_inlet_loc - a boolean variable specifying whether to use inlet location provided (0) or to find the inlet location automatically (1)
+#         inlet_loc - the coordinates of the parent node for the entire tree
 # Outputs: geom - contains elems and properties, reordered according to strahler order so that no element can be higher in the element list than a higher order branch
 ######
 
-def arrange_by_strahler_order(geom, find_inlet_loc, inlet_loc):
+def arrange_by_strahler_order(geom, inlet_loc):
+
     # set up arrays
-    nodes = geom['nodes']
-    elem_properties = np.column_stack([geom['radii'], geom['length'], geom['euclidean length'], geom['elems']])
+    nodes=geom['nodes']
+    elem_properties=np.column_stack([geom['radii'],geom['length'], geom['euclidean length'], geom['elems']])
     elems = np.copy(geom['elems'])  # as elems is altered in this function
-    elems = elems[:, 1:3]  # get rid of first column which means nothing
-    radii = geom['radii']
+    elems=elems[:,1:3] #get rid of first column which means nothing
 
     Ne = len(elems)
     Nn = len(nodes)
-    elem_properties_new = np.zeros([Ne, 6])
+    elem_properties_new = np.zeros([Ne,6])
 
-    # find parent node
-    (elems, elem_properties) = find_parent_node(find_inlet_loc, inlet_loc, nodes, radii, elems, elem_properties)
+    # find root node and element from its coordinates
+    Nn_root=is_member(inlet_loc, nodes)
+    if (Nn_root==-1):
+        print("Warning, root node not located")
 
-    # loop through by strahler order
-    counter_new = 0
-    counter = 1
-    while (counter < Ne):
+    #find root element
+    Ne_place=np.where(elems==Nn_root) # Ne_place = [row,col] indexes of Nn_root (index=elem-1)
+    Ne_root = Ne_place[0]  # only need first index
+    if len(Ne_root) > 1:
+        print("Warning, root node is associated with multiple elements")
+    if len(Ne_root) == 0:
+        print("Warning, no root element located")
+    Ne_root = Ne_root[0]
+    # make root element the first element
+    elems=row_swap_2d(elems, 0, Ne_root) #root is elems[0, :]
+    elem_properties=row_swap_2d(elem_properties, 0, Ne_root)
 
+    # get element pointing right way
+    if (np.squeeze(Ne_place[1])!= 1):
+        elems[0,:]=row_swap_1d(np.squeeze(elems[0,:]),1,0)
+        elem_properties[0,4:6] = row_swap_1d(np.squeeze(elem_properties[0,4:6]),1,0)
+
+    # find orders
+    counter=1
+    counter_new=0
+    while (counter<Ne):
         # find elements which are terminal
         terminal_elems = np.zeros([Ne, 1])
 
         # go through each node
-        for i in range(0, Nn + 1):
+        for i in range(0, Nn+1):
 
             # find number of occurrences of the node
             places = np.where(elems == i)
-            ind1 = places[0]
-            ind2 = places[1]
+            ind1 = places[0] #array of rows index
+            ind2 = places[1] #array of col index
 
-            if (len(ind1) == 1) and ((ind1[0]) != 0):  # if occurs once, then element is terminal (avoids root element)
+            if (len(ind1) == 1) and ((ind1[0]) != 0): #if occurs once, then element is terminal (avoids root element)
 
-                ind1 = ind1[0]
-                ind2 = ind2[0]
+                ind1 = ind1[0] #first occurrence row index
+                ind2 = ind2[0] #first occurrence col index
 
                 # swap to ensure element points right way
-                if ind2 == 0:
-                    elems[ind1, :] = row_swap_1d(np.squeeze(elems[ind1, :]), 1, 0)
-                    elem_properties[ind1, 4:6] = row_swap_1d(np.squeeze(elem_properties[ind1, 4:6]), 1, 0)
+                if ind2==0:
+                    elems[ind1,:]=row_swap_1d(np.squeeze(elems[ind1,:]),1,0)
+                    elem_properties[ind1, 4:6] = row_swap_1d(np.squeeze(elem_properties[ind1,4:6]), 1, 0)
 
                 # assign element under the new element ordering scheme
-                elem_properties_new[counter_new, :] = elem_properties[ind1, :]
-                counter_new = counter_new + 1
+                elem_properties_new[counter_new,:]=elem_properties[ind1,:]
+                counter_new=counter_new+1
 
                 terminal_elems[ind1] = 1
 
                 # join up element with upstream elements
-                nodeNumNew = elems[ind1, 0]  # this is node number at other end of element
-                nodeNum = i
+                
+                nodeNumNew = elems[ind1, 0] #this is node number at other end of element
+                nodeNum=i
                 places = np.where(elems == nodeNumNew)  # find where the new node occurs
+                
                 ind1 = places[0]
                 ind2 = places[1]
-
+                
                 counter2 = 1
-
                 while ((len(ind1) == 2) & (counter2 < Ne)):  # as can only be present twice if a joining node
 
                     # see if branch joins to yet another branch, that we haven't yet encountered (i.e. not nodeNum)
@@ -161,17 +306,17 @@ def arrange_by_strahler_order(geom, find_inlet_loc, inlet_loc):
                         k = 1
                     else:
                         k = 0
-                    terminal_elems[ind1[k]] = 1  # label terminal_elems as joining elements
+                    terminal_elems[ind1[k]] = 1 # label terminal_elems as joining elements
 
                     # switch the way element points
                     if (ind2[k] == 0):
                         elems[ind1[k], :] = row_swap_1d(np.squeeze(elems[ind1[k], :]), 1, 0)
-                        elem_properties[ind1[k], 4:6] = row_swap_1d(np.squeeze(elem_properties[ind1[k], 4:6]), 1, 0)
+                        elem_properties[ind1[k], 4:6] = row_swap_1d(np.squeeze(elem_properties[ind1[k],4:6]), 1, 0)
 
                     nodeNum = nodeNumNew
                     nodeNumNew = elems[ind1[k], 0]
 
-                    # assign new order
+                    #assign new order
                     elem_properties_new[counter_new, :] = elem_properties[ind1[k], :]
                     counter_new = counter_new + 1
 
@@ -182,464 +327,269 @@ def arrange_by_strahler_order(geom, find_inlet_loc, inlet_loc):
                     counter2 = counter2 + 1
 
         # update elems to 'get rid of' terminal elements from the list
-        terminal_elems[0] = 0  # the root node can never be terminal
-        terminal_elems_pair = np.column_stack([terminal_elems, terminal_elems])
+        terminal_elems[0]= 0 #the root node can never be terminal
+        terminal_elems_pair=np.column_stack([terminal_elems, terminal_elems])
         elems[terminal_elems_pair == 1] = -1
 
         # loop exit criteria
-        places = np.where(terminal_elems == 1)
-        places = places[1]
-        if len(places) == 0:
-            counter = Ne + 1
+        places=np.where(terminal_elems == 1)
+        places=places[1]
+        if len(places)==0:
+            counter = Ne+1
         counter = counter + 1
 
-    # assign root element in new order systems
-    elem_properties_new[Ne - 1, :] = elem_properties[0, :]
+    # check for error
+    if np.sum(elem_properties_new[Ne-2,:])==0:
+        print('Warning, not all elements assigned to new order')
 
-    # reduce size due to elements removed
-    elem_properties_new = elem_properties_new[0:Ne, :]
+    # assign root element in new order systems
+    elem_properties_new[Ne-1, :] = elem_properties[0, :]
+
     # reverse order
-    elem_properties_new = np.flip(elem_properties_new, 0)
+    elem_properties_new= np.flip(elem_properties_new,0)
 
     elems = geom['elems']
-    elems = elems[0:Ne, :]
-    elems[:, 1:3] = elem_properties_new[:, 4:6]
-    radii = elem_properties_new[:, 0]
-    lengths = elem_properties_new[:, 1]
-    euclid_lengths = elem_properties_new[:, 2]
+    elems[:,1:3]=elem_properties_new[:,4:6]
 
-    return {'elems': elems, 'radii': radii, 'length': lengths, 'euclidean length': euclid_lengths, 'nodes': nodes}
+    return {'elems': elems, 'radii': elem_properties_new[:,0],'length': elem_properties_new[:,1], 'euclidean length': elem_properties_new[:,2], 'nodes': nodes}
 
 
 ######
-# Function: find parent node in array either from given coordinates or by finding the fattest terminal branch
-# Inputs: nodes - an M x 3 list of node coordinates
-#        radii - N x 1 array with radius of each element
-#         elems - an Nx2(!!!) array with node indices for start and end of node
-#         elem_properties - an N x K array, with each row containing various element properties (radii etc.)
-#         inlet_loc - the coordinates of the parent node for the entire tree (if known)
-#         find_inlet_loc - a boolean variable specifying whether to use inlet location provided (0) or to find the inlet location automatically (1)
-# Outputs: elems and elem_properties updates so that inlet element is the first element in the list
-######
-def find_parent_node(find_inlet_loc, inlet_loc, nodes, radii, elems, elem_properties):
-    # will define inlet as terminal element of largest radius
-    if find_inlet_loc == 1:
-        maxRad = -1
-        # go through each node
-        for i in range(0, len(nodes) + 1):
-
-            # find number of occurrences of the node
-            places = np.where(elems == i)
-            ind1 = places[0]
-            ind2 = places[1]
-
-            if (len(ind1) == 1):  # if occurs once, then element is terminal (avoids root element)
-
-                ind1 = ind1[0]
-                ind2 = ind2[0]
-                radius = radii[ind1]
-
-                if radius > maxRad:
-                    maxRad = radius
-                    maxRadInd = i
-
-        inlet_loc = np.squeeze(nodes[maxRadInd, :])
-        Nn_root = maxRadInd
-    # find root node and element from coordinates provided
-    else:
-        Nn_root = is_member(inlet_loc, nodes)
-        if (Nn_root == -1):
-            print("Warning, root node not located")
-
-    print('Inlet Coordinates:' + str(inlet_loc))
-
-    # find root element
-    Ne_place = np.where(elems == Nn_root)
-    Ne_root = Ne_place[0]  # only need first index
-    if len(Ne_root) > 1:
-        print("Warning, root node is associated with multiple elements")
-    if len(Ne_root) == 0:
-        print("Warning, no root element located")
-    Ne_root = Ne_root[0]
-
-    # make root element the first element
-    elems = row_swap_2d(elems, 0, Ne_root)
-    elem_properties = row_swap_2d(elem_properties, 0, Ne_root)
-
-    # get element pointing right way
-    if (np.squeeze(Ne_place[1]) != 0):
-        elems[0, :] = row_swap_1d(np.squeeze(elems[0, :]), 1, 0)
-        elem_properties[0, 4:6] = row_swap_1d(np.squeeze(elem_properties[0, 4:6]), 1, 0)
-
-    return (elems, elem_properties)
-
-
-######
-# Function: Two types of pruning
-#            - removes terminal branches that connect directly to high order branches
-#            - removes low order sections of tree that connect directly to the umbilical artery
+# Function: removed terminal branches that connect directly to high order branches
 # Inputs: geom - contains elems, and various element properties (length, radius etc.)
 #         orders - contains strahler order of each element orders
 #         threshold_order - the maximum order which a terminal element can be directly connected to
-#         umbilical_threshold - the lowest order branch that can stem from the umbilical artery
-#         Nc - the maximum number of branches at a node
-# Outputs: elems and their corresponding properties are truncated to remove the rows containing pruned elements
+# Outputs: elems and their corresponding properties are truncated to remove the rows containing terminal elements that connect directly to high order branches
 ######
-def prune_by_order(geom, elem_connect, orders, threshold_order, umbilical_threshold, Nc):
-    # define arrays
-    elem_properties = [geom['length'], geom['euclidean length'], geom['radii'], orders]
-    elem_down = elem_connect['elem_down']
-    elems = geom['elems']
-    elems = elems[:, 1:3]
-    Ne = len(elems)
 
-    change = 0
+def prune_by_order(geom, orders, threshold_order):
 
-    # go through list of terminal elements to remove terminal elements adjoining high order brnaches
-    terminalList = np.where(orders == 1)
-    terminalList = terminalList[0]
+     # define arrays
+     elem_properties = [geom['length'], geom['euclidean length'], geom['radii']]
+     elems=geom['elems']
+     elems=elems[:,1:3]
 
-    for i in range(0, len(terminalList)):
-        row = terminalList[i]
+     terminalList = np.where(orders == 1)
+     terminalList=terminalList[0]
 
-        # find parents at the non terminal end of the element, and their order
-        ind = np.where(elems == elems[row, 0])
-        ind = ind[0]
-        orderMax = np.max(orders[ind])
+     # go through list of terminal elements
+     for i in range(0, len(terminalList)):
+         row = terminalList[i]
 
-        # remove element if order exceeds threshold
-        if (orderMax > threshold_order):
-            elems[row, :] = -1
-            change = 1
+         # find parents at the non terminal end of the element, and their order
+         ind=np.where(elems == elems[row,0])
+         ind=ind[0]
+         orderMax = np.max(orders[ind])
 
-    # remove daughters of root element that have order lower than umbilical_threshold
-    for i in range(1, elem_down[0, 0] + 1):
+         # remove element if order exceeds threshold
+         if (orderMax>threshold_order):
+             elems[row,:]=-1
 
-        daughter = elem_down[0, i]
-        order_daughter = orders[daughter]
+     # get rid of dud elements
+     (elems, elem_properties)=remove_rows(elems, elem_properties)
 
-        if order_daughter < umbilical_threshold:
-            elems[daughter, :] = -1
-            change = 1
-
-    # loop to remove any sections that have been isolated from tree
-    numIt = 0
-    while (change == 1) & (numIt < Ne):
-
-        change = 0
-        numIt = numIt + 1
-
-        # get rid of dud elements
-        (elems, elem_properties) = remove_rows(elems, elem_properties)
-        orders = elem_properties[3]
-        elemNum = np.zeros(len(elems))
-        for i in range(0, len(elemNum)):
-            elemNum[i] = i
-
-        # update connectivity
-        elem_connect = element_connectivity_1D(geom['nodes'], np.column_stack([elemNum, elems]), Nc)
-        elem_up = elem_connect['elem_up']
-
-        # check for branches with no upstream element (therefore a disconnected tree)
-        for i in range(1, len(elem_up)):
-            if elem_up[i, 0] == 0:
-                if orders[i] != np.max(orders):  # don't get rid of parent node
-                    elems[i, :] = -1
-                    change = 1
-                else:
-                    print('keep if statement')
+     # reassign element numbers
+     elemNum = np.zeros(len(elems))
+     for i in range(0, len(elemNum)):
+         elemNum[i]=i
 
     # put element properties back into geom format
-    geom['elems'] = np.column_stack([elemNum, elems])
-    geom['length'] = elem_properties[0]
-    geom['euclidean length'] = elem_properties[1]
-    geom['radii'] = elem_properties[2]
+     geom['elems']=np.column_stack([elemNum, elems])
+     geom['length'] =elem_properties[0]
+     geom['euclidean length'] = elem_properties[1]
+     geom['radii'] = elem_properties[2]
 
-    return (geom, elem_connect)
-
-######
-# Function: finds properties of according to each Branch of the tree, where a branch is a set of elements with the
-#          same Strahler order
-# Inputs: geom - contains elems, and various element properties (length, radius etc.)
-#         order - contains strahler order and generation of each element
-#         elem_up - contains index of upstream elements for each element
-# Outputs: branchGeom: contains the properties arrange in arrays according to each branch:
-#           radius / length / euclidean length / strahler order: all M x 1 arrays where M is number of branches
-#          branches: an N x 1 array where N is the number of elements, contains branch number of each element
-######
-
-def arrange_by_branches(geom, elem_up, order):
-
-    # find branches
-    Ne = len(order)
-    branches = np.zeros(Ne)
-    branchNum = 1
-
-    for i in range(0, Ne):
-        if order[i] != order[elem_up[i, 1]]:  # belongs to new branch
-            branchNum = branchNum + 1
-        branches[i] = branchNum
-
-    Nb = int(max(branches))
-
-    # sort results into branch groups
-    lengths = geom['length']
-    radii = geom['radii']
-    nodes= geom['nodes']
-    elems = geom['elems']
-
-    branchRad = np.zeros(Nb)
-    branchLen = np.zeros(Nb)
-    branchEucLen = np.zeros(Nb)
-    branchOrder = -1. * np.ones(Nb)
-
-    for i in range(0, Nb):
-        branchElements = np.where(branches == i+1) #find elements belonging to branch number
-        branchElements = branchElements[0]
-
-        for j in range(0, len(branchElements)): #go through all elements in branch
-            ne = branchElements[j]
-
-            branchOrder[i] = order[ne]
-            branchLen[i] = branchLen[i] + lengths[ne]
-            branchRad[i] = branchRad[i] + radii[ne]
-
-        branchRad[i] = branchRad[i] / len(branchElements) # to get average radius
-
-        startNode=nodes[int(elems[branchElements[0],1]),:]
-        endNode=nodes[int(elems[branchElements[len(branchElements)-1],2]),:]
-
-        branchEucLen[i]=np.sqrt(np.sum(np.square(startNode-endNode)))
-
-    return {'radii': branchRad, 'length': branchLen, 'euclidean length': branchEucLen, 'order': branchOrder,
-            'branches': branches}
+     return (geom)
 
 
 ######
-# Function: find branch angles + L/LParent & D/Dparent
-#          scale all results into mm and degrees
+# Function: find branch angles, diameter ratio and length ratio of each branch
 # Inputs: geom - contains elems, and various element properties (length, radius etc.)
 #         orders - contains strahler order and generation of each element
 #         elem_connect - contains upstream and downstream elements for each element
-#         branchGeom - contains branch properties (length, radius, etc.)
-#         voxelSize - for conversion to mm (must be isotropic)
-#         conversionFactor - to scale radii correction, printed in log of ImageJ during MySkeletonizationProcess
-# Outputs: geom and branchGeom are altered so all there arrays are in correct units (except nodes, and radii_unscaled, which remain in voxels) ##################
-#          seg_angles - angle (radians) at each element junction in the tree assigned to each element according to how it branches from its parent
+# Outputs: branch_angles - angle (radians) at each branching junction in the tree assigned to each element according to how it branches from its parent
 #          diam_ratio - ratio of length/diameter of each branch, accounting for multi-segment branches
 #          length_ratio - ratio of parent / child lengths, accounting for multi-segment branches
-#          diam_ratio / length_ratio / branch_angles are the same but for whole branches
 ######
 
-def find_branch_angles(geom, orders, elem_connect, branchGeom, voxelSize, conversionFactor):
+def find_branch_angles(geom, orders, elem_connect):
 
     # unpackage inputs
-    nodes = geom['nodes']
+    nodes=geom['nodes']
     elems = geom['elems']
     elems = elems[:, 1:3]  # get rid of useless first column
-    radii = geom['radii']
-    lengths = geom['length']
+    radii= geom['radii']
+    lengths = geom['euclidean length']
 
-    branches = branchGeom['branches']
-    branchRad = branchGeom['radii']
-    branchLen = branchGeom['length']
-
-    strahler = orders['strahler']
+    strahler=orders['strahler']
     generations = orders['generation']
 
-    elem_up = elem_connect['elem_up']
+    elem_up=elem_connect['elem_up']
+    elem_down = elem_connect['elem_down']
 
     # new arrays
     num_elems = len(elems)
-    num_branches = len(branchRad)
-
-    branch_angles = -1. * np.ones(num_branches) # results by branch (Strahler)
-    diam_ratio_branch = -1. * np.ones(num_branches)
-    length_ratio_branch = -1. * np.ones(num_branches)
-
-    diam_ratio = -1. * np.ones(num_elems)  # results by generation
+    branch_angles = -1. * np.ones(num_elems)
+    diam_ratio = -1. * np.ones(num_elems)
     length_ratio = -1. * np.ones(num_elems)
-    seg_angles = -1. * np.ones(num_elems)
+    error = 0
 
-    # find results for each element (ignoring parent element)
+    # find results for each element
     for ne in range(1, num_elems):
 
-        neUp = elem_up[ne, 1] # find parent
+        # find parent
+        neUp=elem_up[ne,1]
 
-        if (generations[neUp] < generations[ne]): # there is branching but not necessarily a new strahler branch
+        if elem_up[ne,0]!=1:
+            error=error+1 # expect each branch to have exactly one parent
+
+        elif (generations[neUp] < generations[ne]) & (strahler[neUp] > strahler[ne]): # an actual branch causes both change in generation and order
 
             # parent node
-            endNode = int(elems[neUp, 0])
-            startNode = int(elems[neUp, 1])
-            v_parent = nodes[endNode, :] - nodes[startNode, :]
+            endNode=int(elems[neUp, 0])
+            startNode=int(elems[neUp, 1])
+            v_parent = nodes[endNode, :] - nodes[startNode,:]
             v_parent = v_parent / np.linalg.norm(v_parent)
 
-            d_parent = 2 * radii[neUp]
-            L_parent = lengths[neUp]
+            d_parent=2*radii[neUp]
+            L_parent=lengths[neUp]
+
+            # loop to find adjoining parents
+            nextUp = elem_up[neUp, 1]
+            continueLoop=1
+            while (strahler[nextUp]==strahler[neUp])& continueLoop: # loop through to add joining branches
+                L_parent=L_parent+lengths[nextUp]
+                if elem_up[nextUp,0]>0:
+                    nextUp=elem_up[nextUp,1]
+                else:
+                    continueLoop=0
 
             # daughter
             endNode = int(elems[ne, 1])
             startNode = int(elems[ne, 0])
             v_daughter = nodes[startNode, :] - nodes[endNode, :]
-            v_daughter = v_daughter / np.linalg.norm(v_daughter)
+            v_daughter=v_daughter/np.linalg.norm(v_daughter)
 
-            d_daughter = 2 * radii[ne]
-            L_daughter = lengths[ne]
+            d_daughter=2*radii[ne]
+            L_daughter=lengths[ne]
 
-            # calculate angle
-            dotProd = np.dot(v_parent, v_daughter)
-            if abs(dotProd <= 1):
-                angle=np.arccos(dotProd)
-                seg_angles[ne] = angle
-            else:
-                angle=-1
-                print('Angle Error, element: ' + str(ne))
+            # loop to find adjoining daughters
+            nextDown = elem_down[ne, 1]
+            continueLoop=1
+            while (strahler[nextDown]==strahler[ne])& continueLoop: #loop through to add joining branches
+                L_daughter=L_daughter+lengths[nextDown]
+                if elem_down[nextDown,0]==1: #as can only be one daughter if unbranching
+                    nextDown=elem_down[nextDown,1]
+                else:
+                    continueLoop=0
 
-            if d_parent != 0:
-                diam_ratio[ne] = d_daughter/ d_parent
-            if L_parent != 0:
-                length_ratio[ne] = L_daughter / L_parent
+            # calculate results
+            branch_angles[ne] = np.arccos(np.dot(v_parent, v_daughter))
+            if d_parent!=0:
+                diam_ratio[ne]=d_daughter/d_parent
+            length_ratio[ne] = L_daughter / L_parent
 
-            if (strahler[neUp] > strahler[ne]): #then this also is a new strahler branch
-
-                # assign results
-                branchNum = int(branches[ne])-1
-                parentBranch = int(branches[neUp])-1
-
-                branch_angles[branchNum] = angle
-
-                if branchRad[parentBranch] != 0:
-                    diam_ratio_branch[branchNum] = branchRad[branchNum] / branchRad[parentBranch]
-                if branchLen[parentBranch] != 0:
-                    length_ratio_branch[branchNum] = branchLen[branchNum] / branchLen[parentBranch]
-
-    # scale results into mm and degrees & package them up
-    geom['radii'] = geom['radii'] / conversionFactor * voxelSize
-    geom['length'] = geom['length'] * voxelSize
-    geom['nodes'] = geom['nodes'] * voxelSize
-    geom['euclidean length'] = geom['euclidean length'] * voxelSize
-    geom['branch angles'] = seg_angles * 180 / np.pi
-    geom['diam_ratio'] = diam_ratio
-    geom['length_ratio'] = length_ratio
-
-    branchGeom['radii']= branchGeom['radii']/ conversionFactor
-    branchGeom['radii'] = branchGeom['radii'] * voxelSize
-    branchGeom['branch_angles'] = branch_angles * 180 / np.pi
-    branchGeom['length'] = branchGeom['length'] * voxelSize
-    branchGeom['euclidean length'] = branchGeom['euclidean length'] * voxelSize
-
-    branchGeom['length ratio'] = length_ratio_branch
-    branchGeom['diam ratio'] = diam_ratio_branch
-
-    return (geom, branchGeom)
+    print('Number of elements for which no angle could be found (no unqiue parent) = ' + str(error))
+    return (branch_angles, diam_ratio, length_ratio)
 
 
-#######################
-# Function: Find the Major/Minor ratios of length, diameter and branch angle
-# Inputs:  geom - contains elements, and their radii, angles and lengths
-#          elem_down - contains the index of the downstream elements at each element
-# Outputs: grad - the diameter scaling coefficient
-#######################
+######
+# Function: find statistics on branching tree and display as table
+# Inputs: geom - contains various element properties (length, radius etc.) by element
+#         orders - contains strahler order and generation of each element
+# Outputs: table of information according to order and other information printed to screen
+######
 
-def major_minor(geom, elem_down):
+def summary_statistics(orders, geom):
 
-    # extract data
-    radii=geom['radii']
-    angles=geom['branch angles']
+    # unpack inputs
+    strahler=orders['strahler']
+    generation=orders['generation']
+
     length=geom['length']
+    euclid_length = geom['euclidean length']
+    radii = geom['radii']
+    branch_angles = geom['branch_angles']
+    diam_ratio = geom['diam_ratio']
+    length_ratio = geom['length_ratio']
 
-    # create arrays
-    Ne=len(elem_down)
+    # statisitcs by order
+    num_orders = int(max(strahler))
+    values_by_order=np.zeros([num_orders,9])
+    extra_branches=0
 
-    Minor_angle=-1*np.ones(Ne)
-    Major_angle = -1*np.ones(Ne)
+    for n_ord in range(0, num_orders):
 
-    D_Major_Minor = -1 * np.ones(Ne)
-    D_min_parent = -1 * np.ones(Ne)
-    D_maj_parent = -1 * np.ones(Ne)
+        elem_list = (strahler == n_ord+1)
 
-    L_Major_Minor = -1 * np.ones(Ne)
-    L_min_parent = -1 * np.ones(Ne)
-    L_maj_parent = -1 * np.ones(Ne)
+        branch_list = np.extract(elem_list, branch_angles)
+        branch_list = branch_list[(branch_list > -1)]
+        Nb = len(branch_list)
 
-    for i in range(0, Ne):
-        numDown=elem_down[i, 0]
+        # case where there is one branch
+        if Nb==0:
+            Nb=1
+            angle=np.nan
+            extra_branches=extra_branches+1
+        else:
+            angle=np.mean(branch_list)
+            
+        # assign stats for each order
+        values_by_order[n_ord,0]= n_ord + 1 # order
+        values_by_order[n_ord, 1] = len(np.extract(elem_list, elem_list)) # number of segments
+        values_by_order[n_ord, 2] = Nb # number of branches
+        values_by_order[n_ord, 3] = np.sum(np.extract(elem_list, length))/ Nb # length
+        values_by_order[n_ord, 4] = np.sum(np.extract(elem_list, euclid_length))/ Nb # euclidean length
+        values_by_order[n_ord, 5] = 2*np.mean(np.extract(elem_list, radii))# diameter
+        values_by_order[n_ord, 6] = values_by_order[n_ord, 3]/values_by_order[n_ord, 5] # length / diameter
+        values_by_order[n_ord, 7] = np.mean(np.extract(elem_list, length)/np.extract(elem_list, euclid_length)) # tortuosity
+        values_by_order[n_ord,8] = angle # branch angle
 
-        if numDown>1: # then this element has multiple children, find minor / major child
-
-            d_min=100000
-            d_max=0
-            for j in range(1, numDown+1): #look throigh children and find widest & thinnest one
-                child=np.int(elem_down[i, j])
-                d_child=radii[child]
-
-                if d_child>d_max:
-                    d_max=d_child
-                    daughter_max=child
-                if d_child<d_min:
-                    d_min = d_child
-                    daughter_min = child
-
-            if daughter_max!=daughter_min: # ensure two distinct daughters
-
-                Minor_angle[i]=angles[daughter_min]
-                Major_angle[i]=angles[daughter_max]
-
-                if radii[daughter_min]!=0: # avoid divide by zero errors
-                    D_Major_Minor[i]=radii[daughter_max]/radii[daughter_min]
-                if radii[i] != 0:
-                    D_min_parent[i]=radii[daughter_min]/radii[i]
-                    D_maj_parent[i]=radii[daughter_max]/radii[i]
-
-                if length[daughter_min] != 0:
-                    L_Major_Minor[i] = length[daughter_max] / length[daughter_min]
-                if length[i] != 0:
-                    L_min_parent[i] = length[daughter_min] / length[i]
-                    L_maj_parent[i] = length[daughter_max] / length[i]
-    return {'Minor_angle': Minor_angle, 'Major_angle': Major_angle, 'D_maj_min': D_Major_Minor, 'D_min_P': D_min_parent,'D_maj_P': D_maj_parent, 'L_maj_min': L_Major_Minor, 'L_min_P': L_min_parent,'L_maj_P': L_maj_parent}
-
-
-#######################
-# Function: Find & print vascular depth, span & volume
-# Inputs:  nodes - M x 3 array with node coordinates
-#          elems - N x 3 array containing elements
-#          orders - N x 1 array with order of each element
-#          vascVol - vascularVolume, in mm^3 (number of voxels in the volume image)
-# Outputs: depth- Vascular depth, mm
-#          span, vascular span, mm
-#######################
-
-def overall_shape_parameters(nodes, elems,orders, vascVol):
-
-    # find umbilical insertion node
-    inds=np.where(orders==np.max(orders))
-    inds=inds[0]
-    inds=inds[len(inds)-1] #last umbilical elemnt should be further down
-    umbNode=np.int(elems[inds,2]) #take second node as elems point downstream
-    umbEnd=nodes[umbNode,:]
-
-    # extract termimal nodes
-    inds = np.where(orders == 1)
-    inds = inds[0]
-    endNodes=elems[inds,2] #take second node as elems point downstream
-    endNodes=np.squeeze(endNodes.astype(int))
-    endPoints=nodes[endNodes,:]
-
-    # Vascular Span
-    dists=scipy.spatial.distance.pdist(endPoints, 'euclidean') # pairwise distance between points
-    span=(np.max(dists))
-
-    # Get placenta volume
-    ET = EllipsoidTool()
-    (center, radii, rotation) = ET.getMinVolEllipse(endPoints, .01)
-    ellipseVol = ET.getEllipsoidVolume(radii)
-    ET.plotEllipsoid(center, radii, rotation, ax=None, plotAxes=False, cageColor='b', cageAlpha=0.2)
-
-    print('\nOverall Placenta Shape')
-    print('-----------------------')
-    print("Vascular Span = " + str(span) + ' mm')
-    print('Vascular Volume = ' + str(vascVol) + ' mm^3' )
-    print('Placenta Volume = ' + str(ellipseVol)+ ' mm^3' )
-    print("Vascular Density = " + str(vascVol/ellipseVol))
+    # print table
+    header = ['Order','# Segments','# Branches','Length(mm)','Euclidean Length(mm)', 'Diameter(mm)','Len/Diam', 'Tortuosity','Angle(degrees)']
     print('\n')
-    return span
+    print('Statistics By Order: ')
+    print('..................')
+    print(tabulate(values_by_order, headers=header))
+
+    # statistics independent of order
+    values_overall = np.zeros([1, 9])
+
+    elem_list = (strahler > 0)
+    branch_list = np.extract(elem_list, branch_angles)
+    branch_list = branch_list[(branch_list > -1)]  # for actual distinct branches
+
+    Nb = len(branch_list) + extra_branches
+
+
+    values_overall[0, 0] = -1  # order
+    values_overall[0, 1] = len(np.extract(elem_list, elem_list))  # number of segments
+    values_overall[0, 2] = Nb # number of branches
+
+    values_overall[0, 3] = np.sum(length) / Nb  # length
+    values_overall[0, 4] = np.sum(euclid_length) / Nb  # euclidean length
+    values_overall[0, 5] = 2 * np.mean(radii)  # diameter
+
+    values_overall[0, 6] = values_overall[0, 4]/values_overall[0, 5]  # length / diameter
+    values_overall[0, 7] = np.mean(np.extract(elem_list, length) / np.extract(elem_list, euclid_length))  # tortuosity
+    values_overall[0, 8] = np.mean(branch_list) # branch angle
+
+    header = ['     ', '          ', '          ', '          ', '                    ', '            ', '        ',
+              '          ', '              ']
+    print(tabulate(values_overall, headers=header))
+    print('\n')
+
+    # Other statistics
+    print('Other statistics: ')
+    print('..................')
+
+    print('Num generations = ' + str(max(generation)))
+    terminalGen = generation[(strahler == 1)]
+    print('Average Terminal generation = ' + str(np.mean(terminalGen)))
+    diam_ratio = diam_ratio[(diam_ratio > 0)]
+    length_ratio = length_ratio[(length_ratio > -1)]
+    print('D/Dparent = ' + str(np.mean(diam_ratio)))
+    print('L/Lparent = ' + str(np.mean(length_ratio)))
+    print('\n')
+
+    return np.concatenate([values_by_order,values_overall])

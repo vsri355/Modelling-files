@@ -1,8 +1,7 @@
 import os
+import placentagen as pg
 from placentaAnalysisFunctions import *
-from placentaAnalysis_utilities import *
-from placentagen import imports_and_exports as pg
-
+from placentaAnalysis_utilities_new import *
 path = '/hpc/vsri355/Modelling/Modelling-files/test' #points to the folder containing the ex nodes and elem files
 os.chdir(path)
 file_name = "trialtree"  # file names of nodes and elems and takes in the node and elem files to be used
@@ -13,14 +12,14 @@ node = nodes['nodes']
 elem = elements['elems']
 
 #for removing multiple connections in the read in tree these were the lines kejia have used
-seed_geom=seed_geometry_rodent(volume,thickness,ellipticity,cord_insertion_x,cord_insertion_y,umb_artery_length,datapoints_chorion) #this line should be modified to understand the tree
-elem_connect=element_connectivity_1D(seed_geom['nodes'],seed_geom['elems'],7)
-
-#the variables passed in this remove multiple connections function should refer to the read in tree's
-seed_geom,elem_connect=remove_multiple_elements(seed_geom,elem_connect,'non')
-#after this step again the nodes and elems should be updated and assigned with names.
-node=seed_geom['nodes']
-seed_geom['nodes']=node[:,1:]
+#Import chorion and stem geometry
+chorion_and_stem = {}
+chorion_and_stem['nodes'] = pg.import_exnode_tree(file_name+'.exnode')['nodes'][:, 0:4]
+chorion_and_stem['elems'] = pg.import_exelem_tree(file_name+'.exelem')['elems']
+#populate element connectivity
+elem_connectivity = pg.element_connectivity_1D(chorion_and_stem['nodes'],chorion_and_stem['elems'])
+#removing multiple connections
+chorion_and_stem,elem_connect=remove_multiple_elements(chorion_and_stem,elem_connectivity,type=None)
 
 #something with return() should be here which returns the final tree after removing the multiple connections
 
