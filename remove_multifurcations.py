@@ -7,7 +7,7 @@ os.chdir(path)
 file_name = "trialtree"  # file names of nodes and elems and takes in the node and elem files to be used
 #for removing multiple connections in the read in tree
 chorion_and_stem = {}  #initializing the tree geometry
-chorion_and_stem['nodes'] = pg.import_exnode_tree(file_name+'.exnode')['nodes'][:, 1:4]
+chorion_and_stem['nodes'] = pg.import_exnode_tree(file_name+'.exnode')['nodes'][:,1:4]
 chorion_and_stem['elems'] = pg.import_exelem_tree(file_name+'.exelem')['elems']
 #populate element connectivity
 elem_connectivity = pg.element_connectivity_1D(chorion_and_stem['nodes'],chorion_and_stem['elems'])

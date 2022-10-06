@@ -250,28 +250,42 @@ def check_multiple(elem_connect):
 
 def extend_node(elem_i, geom):
     nodes=geom['nodes']
-    elems=geom['elems']
+    elems=geom['elems']  # nodes and elems initiated
     num_nodes = len(nodes)
-    dif = np.zeros(3)
-    new_node = -1 * np.ones(3)
-
+    print('original nodes are:', nodes)
+    dif = np.zeros(3)   #to store the difference between the two nodes(x,y,z) in a numpy array
+    print('dif old:', dif)
+    new_node = -1 * np.ones(3)  #new_node initiated
+    norm = np.ones(3)    # newly added by VS
+    print('new node and the dif array are:', new_node, dif )  #newly added by VS
+    print('number of nodes:',num_nodes)      #newly added by VS
     node1 = int(elems[elem_i][1])
     node2 = int(elems[elem_i][2])  # node at other end of the element
+
     for i in range(0, 3):
         # assuming nodes starts index = node number (start at 0)
-        dif[i] = np.abs(nodes[node1][i] - nodes[node2][i])  # store difference of xyz
-    max_i = np.argmax(dif)  # longest axis (x, y or z)
-    for i in range(0, 3):
-        new_node[i] = nodes[node1][i]  # replicate old node
-        if i == max_i:
-            if nodes[node2][i] < 0:
-                new_node[i] = nodes[node2][i] - 1e-10  # extend node slightly in longest axis
-            else:
-                new_node[i] = nodes[node2][i] + 1e-10
+        #dif[i] = np.abs(nodes[node1][i] - nodes[node2][i])  # store difference of xyz
+        dif[i] = (nodes[node2][i] - nodes[node1][i])
+    print('storing the dif:',dif[i])    #newly added by VS
+    # max_i = np.argmax(dif)  # longest axis (x, y or z)
+    # print('the max_i:',max_i)   # newly added by VS
+    # print('elem_i:', elem_i)
+    # for i in range(0, 3):
+    #     new_node[i] = nodes[node1][i]  # replicate old node
+    #    if i == max_i:
+    #       if nodes[node2][i] < 0:
+    #            new_node[i] = nodes[node2][i] - 1e-10  # extend node slightly in longest axis
+    #         else:
+    #            new_node[i] = nodes[node2][i] + 1e-10
+    #
     # add new node to end
-    nodes = np.vstack((nodes, new_node))
+    norm[i] = np.linalg.norm(dif[i])  # newly added by VS
+    print('normalized vector:', norm[i])
+    new_node[i] = nodes[node2][i] + (dif[i]*norm[i])
+    print('new_node[i]:', new_node[i])  # newly added by VS
+    nodes = np.vstack((nodes, new_node))  # new node created in the same axis as the old one
     node2 = int(num_nodes)
-
+    print('nodes, node1 and node2:', nodes, node1, node2) #newly added by VS
     return nodes, node2
     
     

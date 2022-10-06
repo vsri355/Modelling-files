@@ -41,12 +41,14 @@ def remove_multiple_elements(geom, elem_connect, type):
             elem_connect = element_connectivity_1D_subtree(geom['nodes'], geom['elems'], 6)
         else:
             elem_connect = element_connectivity_1D(geom['nodes'], geom['elems'], 6)
+
         max_down = check_multiple(elem_connect)
     num_elems = len(geom['elems'])
     elem_down = elem_connect['elem_down']
     elem_up = elem_connect['elem_up']
     geom['elem_down'] = elem_down[:,0:3]
     geom['elem_up'] = elem_up[:,0:3]
+
 
     return geom, elem_connect
 
