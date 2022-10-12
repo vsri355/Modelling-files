@@ -256,24 +256,18 @@ def extend_node(elem_i, geom):
     dif = np.zeros(3)   #to store the difference between the two nodes(x,y,z) in a numpy array
     print('dif old:', dif)
     new_node = -1 * np.ones(3)  #new_node initiated
-    norm = np.ones(3)    # newly added by VS
+    norm = np.ones(3)    # normalized vector (i.e) unit vector
     print('new node and the dif array are:', new_node, dif )  #newly added by VS
     print('number of nodes:',num_nodes)      #newly added by VS
     node1 = int(elems[elem_i][1])
     node2 = int(elems[elem_i][2])  # node at other end of the element
-
     for i in range(0, 3):
         # assuming nodes starts index = node number (start at 0)
-        #dif[i] = np.abs(nodes[node1][i] - nodes[node2][i])  # store difference of xyz
-        dif[i] = (nodes[node2][i] - nodes[node1][i])
-    print('storing the dif:',dif)    #newly added by VS
-
-    #for i in range(0, 3):
-    #norm[i] = np.linalg.norm(dif[i])  # newly added by VS
-    norm = np.linalg.norm(dif)
-    print('normalized vector:', norm)
-    #print('dif and norm product:', (dif*norm))
-    print('dif and norm division (unit vector):', (dif/norm))
+        dif[i] = (nodes[node2][i] - nodes[node1][i])  #element(vector) 
+    print('Direction array:',dif)    
+    norm = np.linalg.norm(dif)   #calculating unit vector for the element
+    print('Normalized vector is:', norm)
+    print('Unit vector is:', (dif/norm))
     new_node = (nodes[node2] + ((dif/norm)*1e-3))
     print('new_node created at:', new_node)  # newly added by VS
     nodes = np.vstack((nodes, new_node))  # new node created in the same axis as the old one
