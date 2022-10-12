@@ -1,7 +1,7 @@
 import os
 import placentagen as pg
 from placentaAnalysisFunctions import *
-from placentaAnalysis_utilities_new import *
+from placentaAnalysis_utilities import *
 path = '/hpc/vsri355/Modelling/Modelling-files/test' #points to the folder containing the ex nodes and elem files
 os.chdir(path)
 file_name = "trialtree"  # file names of nodes and elems and takes in the node and elem files to be used
