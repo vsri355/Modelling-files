@@ -1,214 +1,16 @@
+
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
+import warnings
 from mpl_toolkits.mplot3d import Axes3D
-
-######
-# Contains following functions for placenta analysis:
-# sort_elements_order
-# check_multiple
-# update_elem
-# extend_node
-# extend_node_subtree
-# remove_indexed_row
-# remove_rows
-# row_swap_2d
-# row_swap_1d
-# is_member
-# plot_vasculature_3d
-# find_maximum_joins
-# evaluate_orders
-# element_connectivity_1D
-# export_solution_2
-# export_to_ipelem
-# export_to_ipnode
-# import_ipnode_tree
-# import_ipelem_tree
-# get_final_integer
-# get_final_float
-# import_exnode_tree
-# import_exelem_tree
-# is_float
-# find_length_elem
-# find_length_elem_single
-######
-
-######
-# Function: Sorts elements by order descending order
-# Inputs: elems - array containing elements where elems=[elem_no, node1, node2]
-# Outputs: elems - sorted elements by order
-######
-
-def sort_elements_order(elems):
-    for ne in range(0,len(elems)):
-        for ne2 in range(0,len(elems)):
-            if elems[ne][1] < elems[ne2][1]:
-                row_swap_2d(elems,ne,ne2)
-    if not ne%100:
-        print (ne),'out of', len(elems), 'elems'
-    return elems
-
-######
-# Function: checks whether there are more than 2 elements connected to a node
-# Inputs: elem_connect - connectivity information about a set of nodes and elements
-# Outputs: max_down - maximum number of downstream elements at a node
-######
-def check_multiple(elem_connect):
-    up = elem_connect['elem_up']
-    down = elem_connect['elem_down']
-    for i in range(0, len(up)):
-        if up[i][0] > 2:
-            print ('element ', i, 'has >2 upstream elements')
-    max_down=0
-    count = 0
-    for i in range(0, len(down)):
-        if down[i][0] > 2:
-            print ('element ', i, 'has ', down[i][0], ' downstream elements')
-            if max_down < down[i][0]:
-                max_down=down[i][0]
-            count = count + 1
-
-    print ('number of elements with >2 down stream: ', count)
-
-    return max_down
-
-######
-# Function: creates new element connecting node1 and node2 and updates existing elements that start at node1
-# Inputs: elem_i - elem that has more than 2 downstream elements
-#		  node2 - new node number
-#		  geom - array containing tree information eg. elems, nodes, radii, length, euclidean length
-#         elem_connect - array containing element connectivity information of elem_down and elem_up
-# Outputs: geom_new - updated input geom array with extra element and node
-######
-def update_elems(elem_i, node2, geom, elem_connect):
-    #unpack inputs
-    elem_up = elem_connect['elem_up']
-    elem_down = elem_connect['elem_down']
-    elems=geom['elems']
-    nodes=geom['nodes']
-
-    num_elem = len(elems)
-    new_elem = -1 * np.ones(3)
-    node1=int(elems[elem_i][2]) #node other end of elem
-
-    # create new elem connecting node1 and new node2
-    new_elem[0] = num_elem  # elem numbering starts from 0; [0 1 2] num_elem = 3; new elem = 3
-    new_elem[1] = node1
-    new_elem[2] = node2
-
-    # add new element to end
-    elems = np.vstack((elems, new_elem))
-
-    # update after second downstream element with new node
-    for i in range(2,elem_down[elem_i][0]+1):
-        old_elem = elem_down[elem_i][i]  # first down stream element
-        elems[old_elem][1] = node2  # change starting node of old_elem to new node2
-
-    geom['elems']=elems
-
-    # add copy of node1 geom for node2 at end
-    for item in geom.keys():
-        current = geom[item]
-        # print 'key:', item
-        #print 'current', current
-        # print 'current[ne]', current[ne]
-        if item == 'nodes' or item == 'elems':
-            continue #node and element already appended
-        elif item == 'length': #radii 1D array
-            new_length = find_length_single(nodes, node1, node2)
-            current = np.hstack((current, new_length))
-        else:
-            current = np.hstack((current, current[elem_i]))
-        geom[item]=current
-
-    return geom
-
-
-######
-# Function: adds another node to the end of node list that is the input node extended slightly in the longest axis of the
-#           associated element
-# Inputs: elem_i - index of element associated with >2 downstream elements
-#		  nodes - node info in a skeleton where nodes=[x, y, z]
-#		  elems - element info where elems=[elem_no, node1, node2] elements and nodes start from 0
-# Output: updated nodes - new node appended to end of input nodes
-#         node2 - the node number of the new node
-######
-def extend_node(elem_i, geom):
-    nodes=geom['nodes']
-    elems=geom['elems']
-    num_nodes = len(nodes)
-    dif = np.zeros(3)
-    new_node = -1 * np.ones(3)
-
-    node1 = int(elems[elem_i][1])
-    node2 = int(elems[elem_i][2])  # node at other end of the element
-    for i in range(0, 3):
-        # assuming nodes starts index = node number (start at 0)
-        dif[i] = np.abs(nodes[node1][i] - nodes[node2][i])  # store difference of xyz
-    max_i = np.argmax(dif)  # longest axis (x, y or z)
-    for i in range(0, 3):
-        new_node[i] = nodes[node1][i]  # replicate old node
-        if i == max_i:
-            if nodes[node2][i] < 0:
-                new_node[i] = nodes[node2][i] - 1e-10  # extend node slightly in longest axis
-            else:
-                new_node[i] = nodes[node2][i] + 1e-10
-    # add new node to end
-    nodes = np.vstack((nodes, new_node))
-    node2 = int(num_nodes)
-
-    return nodes, node2
-
-#subtree input nodes has node numbers in the first column
-def extend_node_subtree(elem_i, geom):
-    nodes=geom['nodes']
-    elems=geom['elems']
-    num_nodes = len(nodes)
-    dif = np.zeros(3)
-    new_node = -1 * np.ones(4)
-
-    node1 = int(elems[elem_i][1])
-    node2 = int(elems[elem_i][2])  # node at other end of the element
-    for nn in range(0, num_nodes):
-        if nodes[nn, 0] == node1:
-            nn1 = nn
-        elif nodes[nn, 0] == node2:
-            nn2 = nn
-    for i in range(1, 4):
-        dif[i-1] = np.abs(nodes[nn1][i] - nodes[nn2][i])  # store difference of xyz
-    max_i = np.argmax(dif) + 1  # longest axis (x, y or z)
-    new_node[i] = nodes[nn1][i]  # replicate old node
-    for i in range(1, 4):
-        new_node[i] = nodes[nn1][i]  # replicate old node
-        if i == max_i:
-         if nodes[nn2][i] < 0:
-            new_node[i] = nodes[nn2][i] - 1e-10  # extend node slightly in longest axis
-         else:
-            new_node[i] = nodes[nn2][i] + 1e-10
-    # add new node to end
-    new_node[0]=max(nodes[:,0])+1
-    nodes = np.vstack((nodes, new_node))
-    node2 = int(new_node[0])
-
-    return nodes, node2
-
-
-######
-# Function: Remove rows from main_array at which an matching index array is equal to index
-# Inputs: main_array - an N x M array of values
-# 		  index_array - an 1 x N array of values
-#		  index - a value that controls removal of rows
-# Output: modified main_array with rows removed where corresponding col of index_array == index
-######
-
-def remove_indexed_row(main_array, index_array, index):
-    i = 0
-    while i < len(main_array):
-        if index_array[i] == index:
-            main_array = np.delete(main_array, i, axis=0)
-    i = i + 1
-    return main_array
-
+import skimage
+from skimage import io
+import pandas as pd
+from PIL import Image
+from statistics import mean
+import nibabel as nib
 
 ######
 # Function: Remove rows from both mainArray and Arrays at which main array has values less than zero
@@ -340,9 +142,9 @@ def find_maximum_joins(elems):
     Nc = (max(result)) + 1
 
     # Warning if detect an unusual value
-    if Nc > 10:
+    if Nc > 12:
         print('Warning, large number of elements at one node: ' + str(Nc))
-        Nc = 10
+        Nc = 12
 
     return Nc
 
@@ -426,7 +228,110 @@ def evaluate_orders(elems, elem_connect):
 #          elem_down: an N x Nc array containing indices of downstream elements (the first value is number of downstream elements)
 ######
 
-def element_connectivity_1D(node_loc, elems, Nc):
+###copied from old file just for this function
+def check_multiple(elem_connect):
+    up = elem_connect['elem_up']
+    down = elem_connect['elem_down']
+    for i in range(0, len(up)):
+        if up[i][0] > 2:
+            print ('element ', i, 'has >2 upstream elements')
+    max_down=0
+    count = 0
+    for i in range(0, len(down)):
+        if down[i][0] > 2:
+            print ('element ', i, 'has ', down[i][0], ' downstream elements')
+            if max_down < down[i][0]:
+                max_down=down[i][0]
+            count = count + 1
+
+    print ('number of elements with >2 down stream: ', count)
+
+    return max_down
+
+def extend_node(elem_i, geom):
+    nodes=geom['nodes']
+    elems=geom['elems']  # nodes and elems initiated
+    num_nodes = len(nodes)
+    print('original nodes are:', nodes)
+    dif = np.zeros(3)   #to store the difference between the two nodes(x,y,z) in a numpy array
+    print('dif old:', dif)
+    new_node = -1 * np.ones(3)  #new_node initiated
+    norm = np.ones(3)    # newly added by VS
+    print('new node and the dif array are:', new_node, dif )  #newly added by VS
+    print('number of nodes:',num_nodes)      #newly added by VS
+    node1 = int(elems[elem_i][1])
+    node2 = int(elems[elem_i][2])  # node at other end of the element
+
+    for i in range(0, 3):
+        # assuming nodes starts index = node number (start at 0)
+        #dif[i] = np.abs(nodes[node1][i] - nodes[node2][i])  # store difference of xyz
+        dif[i] = (nodes[node2][i] - nodes[node1][i])
+    print('storing the dif:',dif)    #newly added by VS
+
+    #for i in range(0, 3):
+    #norm[i] = np.linalg.norm(dif[i])  # newly added by VS
+    norm = np.linalg.norm(dif)
+    print('normalized vector:', norm)
+    #print('dif and norm product:', (dif*norm))
+    print('dif and norm division (unit vector):', (dif/norm))
+    new_node = (nodes[node2] + ((dif/norm)*1e-3))
+    print('new_node created at:', new_node)  # newly added by VS
+    nodes = np.vstack((nodes, new_node))  # new node created in the same axis as the old one
+    node2 = int(num_nodes)
+    print('nodes, node1 and node2:', nodes, node1, node2) #newly added by VS
+    return nodes, node2
+    
+    
+def update_elems(elem_i, node2, geom, elem_connect):
+    #unpack inputs
+    elem_up = elem_connect['elem_up']
+    elem_down = elem_connect['elem_down']
+    elems=geom['elems']
+    nodes=geom['nodes']
+
+    num_elem = len(elems)
+    new_elem = -1 * np.ones(3)
+    node1=int(elems[elem_i][2]) #node other end of elem
+
+    # create new elem connecting node1 and new node2
+    new_elem[0] = num_elem  # elem numbering starts from 0; [0 1 2] num_elem = 3; new elem = 3
+    new_elem[1] = node1
+    new_elem[2] = node2
+
+    # add new element to end
+    elems = np.vstack((elems, new_elem))
+
+    # update after second downstream element with new node
+    for i in range(2,elem_down[elem_i][0]+1):
+        old_elem = elem_down[elem_i][i]  # first down stream element
+        elems[old_elem][1] = node2  # change starting node of old_elem to new node2
+
+    geom['elems']=elems
+
+    # add copy of node1 geom for node2 at end
+    for item in geom.keys():
+        current = geom[item]
+        # print 'key:', item
+        #print 'current', current
+        # print 'current[ne]', current[ne]
+        if item == 'nodes' or item == 'elems':
+            continue #node and element already appended
+        elif item == 'length': #radii 1D array
+            new_length = find_length_single(nodes, node1, node2)
+            current = np.hstack((current, new_length))
+        else:
+            current = np.hstack((current, current[elem_i]))
+        geom[item]=current
+
+    return geom   
+
+##################
+
+
+def element_connectivity_1D(node_loc, elems, Nc) -> object:
+    """
+    @rtype: object
+    """
     # Initialise connectivity arrays
     num_elems = len(elems)
     elem_upstream = np.zeros((num_elems, Nc), dtype=int)
@@ -444,12 +349,12 @@ def element_connectivity_1D(node_loc, elems, Nc):
 
     # assign connectivity
     for ne in range(0, num_elems):
-        nnod2 = int(elems[ne][2]) #end node of elem2
+        nnod2 = int(elems[ne][2])
 
         for noelem in range(1, elems_at_node[nnod2][0] + 1):
-            ne2 = elems_at_node[nnod2][noelem] #other elements at end node
+            ne2 = elems_at_node[nnod2][noelem]
 
-            if ne2 != ne: #not upstream elem
+            if ne2 != ne:
                 elem_upstream[ne2][0] = elem_upstream[ne2][0] + 1
                 elem_upstream[ne2][elem_upstream[ne2][0]] = ne
                 elem_downstream[ne][0] = elem_downstream[ne][0] + 1
@@ -493,283 +398,152 @@ def export_solution_2(data, groupname, filename, name):
 
     return 0
 
-
 ######
-# Modified from placentagen (https://github.com/VirtualPregnancy/placentagen)
-# Writes values to a cmgui ipelem file
-# Inputs: data - an N x 3 array with a element information for the tree =[elem no., node1, node2]
-#         name - name in heading in cmgui
-#         filename - name that the file is saved as
-# Outputs: an "ipelem" file containing the data value for each element, named according to names specified
+# Fucntion: Read in test answers for test script
+# Inputs: reads in values from csv file ''test_tree_answers.csv'
+# Outputs: puts all the answers as arrays into trueAnswers
 ######
 
-def export_to_ipelem(data, name, filename):
-    # Write header
-    type = "ipelem"
-    data_num = len(data)
-    filename = filename + '.' + type
-    f = open(filename, 'w')
-    f.write(" CMISS Version 2.1  ipelem File Version 2\n")
-    f.write(" Heading: %s\n\n" % name)
-    f.write(" The number of elements is [1]: %s \n\n" % int(data_num))
+def loadTestAnswers():
 
-    # Write element values
-    for x in range(0, data_num):
-        f.write(" Element number [    1]:     %s\n" % int(x + 1))
-        f.write(" The number of geometric Xj-coordinates is [3]: 3\n")
-        f.write(" The basis function type for geometric variable 1 is [1]:  1\n")
-        f.write(" The basis function type for geometric variable 2 is [1]:  1\n")
-        f.write(" The basis function type for geometric variable 3 is [1]:  1\n")
-        f.write(" Enter the 2 global numbers for basis 1: %s %s\n\n" % (int(data[x][1] + 1), int(data[x][2] + 1)))
+    #read csv
+    with open('test_tree_answers.csv') as csvDataFile:
+        cols=['nx','ny','nz','e0','e1','e2','e0_ordered','e1_ordered','e2_ordered','angle','diamR','lengthR','order','generation1','generation2','e0_ordered_2','e1_ordered_2','e2_ordered_2','branch','lenB','radiiB','angleB','diamRB','lengthRB']
+        data_file = pd.read_csv(csvDataFile, usecols=cols)
+        data_file.columns = cols
 
-    f.close()
+    #Convert answer files to arrays:
+    generation1_true=data_file.generation1.values
+    generation2_true=data_file.generation2.values
+    diam_ratio_true=data_file.diamR.values
+    length_ratio_true=data_file.lengthR.values
+    order_true=data_file.order.values
+    angles_true=data_file.angle.values
+    branch_angles_true=data_file.angleB.values
+    branch_Dratio_true = data_file.diamRB.values
+    branch_Lratio_true = data_file.lengthRB.values
+    branch_true=data_file.branch.values
+    branch_len = data_file.lenB.values
+    branch_radii = data_file.radiiB.values
 
-    return 0
+    #package answers
+    trueAnswers={}
 
+    trueAnswers['order']=order_true[0:11]
+    trueAnswers['generation1']=generation1_true[0:11]
+    trueAnswers['generation2']=generation2_true[0:10]
+    trueAnswers['angles']=angles_true[0:10]
+    trueAnswers['diam_ratio']=diam_ratio_true[0:10]
+    trueAnswers['length_ratio']=length_ratio_true[0:10]
+    trueAnswers['branches'] = branch_true[0:10]
+    trueAnswers['lengthB'] = branch_len[0:7]
+    trueAnswers['radiiB'] = branch_radii[0:7]
+    trueAnswers['diam_RatioB'] = branch_Dratio_true[0:7]
+    trueAnswers['length_RatioB'] = branch_Lratio_true[0:7]
+    trueAnswers['anglesB'] = branch_angles_true[0:7]
 
-######
-# Modified from placentagen (https://github.com/VirtualPregnancy/placentagen)
-# Writes values to a cmgui ipelem file
-# Inputs: data - an N x 3 array with a element information for the tree =[elem no., node1, node2]
-#         name - name in heading in cmgui
-#         filename - name that the file is saved as
-# Outputs: an "ipelem" file containing the data value for each element, named according to names specified
-######
+    cols2 = ['angle', 'diamR', 'lengthR','order', 'generation1', 'generation2', 'branch', 'lenB', 'radiiB', 'angleB', 'diamRB', 'lengthRB']
+    data_file=data_file.drop(cols2, axis=1)
+    data_file=data_file.values
+    trueAnswers['nodes']=data_file[:,0:3]
+    elems_unordered_true=data_file[:, 3:6]
+    trueAnswers['elems_unordered']=elems_unordered_true[0:11,:]
+    elems_ordered_true=data_file[:, 6:9]
+    trueAnswers['elems_ordered']=elems_ordered_true[0:11,:]
+    elems_pruned_true=data_file[:, 9:12]
+    trueAnswers['elems_pruned']=elems_pruned_true[0:10,:]
 
-def export_to_ipnode(data, name, filename):
-    # Write header
-    type = "ipnode"
-    data_num = len(data)
-    filename = filename + '.' + type
-    f = open(filename, 'w')
-    f.write(" CMISS Version 2.1  ipnode File Version 2\n")
-    f.write(" Heading: %s\n\n" % name)
-    f.write(" The number of nodes is [1]: %s \n" % int(data_num))
-    f.write(" Number of coordinates [3]: 3\n")
-    f.write(" Do you want prompting for different versions of nj=1 [N]? N\n")
-    f.write(" Do you want prompting for different versions of nj=2 [N]? N\n")
-    f.write(" Do you want prompting for different versions of nj=3 [N]? N\n")
-    f.write(" The number of derivatives for coordinate 1 is [0]: 0\n")
-    f.write(" The number of derivatives for coordinate 2 is [0]: 0\n")
-    f.write(" The number of derivatives for coordinate 3 is [0]: 0\n")
-
-    # Write element values
-    for x in range(0, data_num):
-        f.write(" Node number [    1]:     %s\n" % int(x + 1))
-        f.write(" The Xj(1) coordinate is [ 0.00000E+00]:  %s\n" % data[x][0])
-        f.write(" The Xj(2) coordinate is [ 0.00000E+00]:  %s\n" % data[x][1])
-        f.write(" The Xj(3) coordinate is [ 0.00000E+00]:  %s\n\n" % data[x][2])
-
-    f.close()
-
-    return 0
+    return trueAnswers
 
 ######
-# Function: Takes an ipelem file from CMGUI and returns an array of elements and the total number of elements
-# Inputs:	ipelem file containing element information for a tree
-# Outputs:	total_elems - total number of elements
-#			elems - an N x 3 array, where elems=[element_number, start_node, end_node] for N elements
+# Function: Loads in a stack of images, located in path, and with naming convention name (goes slice at a time to avoid memory errors)
+#     Inputs: numImages - integer, number of images in the stack
+#             name - string for name of images. Note images must be numbered from 0
+#     Outputs: Image, a 3D BOOLEAN array containing image
 ######
 
-def import_ipelem_tree(filename):
-    # count element for check of correct number for the user, plus use in future arrays
-    count_el = 0
-    total_el = 0
-    # Initialise array of el numbers and values
-    el_array = np.empty((0,3),dtype = int)
-    # open file
-    with open(filename) as f:
-        # loop through lines of file
-        while 1:
-            line = f.readline()
-            if not line:
-                break  # exit if done with all lines
-            # identifying whether there is an element defined here
-            if line.find("Element number") != -1: #line defines new element
-            	count_el = count_el + 1  # count the element
-                count_atribute = 0  # intitalise attributes of the element (1st node, 2nd node)
-                el_array = np.append(el_array, np.zeros((1, 3),dtype = int), axis=0)
-                el_array[count_el - 1][count_atribute] = get_final_integer(line) - 1 #element number in first col
-            else:
-                if line.find("global") != -1: #if right line
-                	count_atribute = count_atribute + 1
-                	ibeg=line.index(":")
-                	iend=len(line)
-                	sub_string=line[ibeg+1:iend]
-                	sub_string=sub_string.strip()
-                	imid=sub_string.index(" ")
-                	el_array[count_el - 1][count_atribute] = float(sub_string[0:imid])  # 1st node of element
-                	el_array[count_el - 1][count_atribute + 1] = float(sub_string[imid+1:len(sub_string)])  # 2nd node of element
+def load_image_bool(name, numImages):
 
-    total_el = count_el
-    return total_el, el_array
+    # read in first image + get dimensions to initialize array
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        im = io.imread(name.format(0))
+        skimage.img_as_bool(im)
+    Image=np.zeros([im.shape[0], im.shape[1], numImages], dtype=bool)
+    Image[:, :, 0] = im
 
-######
-# Function: Takes an ipnode file from CMGUI and returns an array of nodes and the total number of nodes
-# Inputs:	ipnode file containing node information for a tree
-# Outputs:	total_nodes - total number of nodes
-#			nodes - an M x 3 array where nodes=[x_coord, y_coord, z_coord] for M nodes
-######
+    # load all slices
+    for i in range(1, numImages):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            im = io.imread(name.format(i))
+            skimage.img_as_bool(im)
+        Image[:,:,i]=im
 
-def import_ipnode_tree(filename):
-    # count nodes for check of correct number for the user, plus use in future arrays
-    count_node = 0
-    # Initialise array of node numbers and values
-    node_array = np.empty((0,3), dtype=float)
-    # open file
-    with open(filename) as f:
-        # loop through lines of file
-        while 1:
-            line = f.readline()
-            if not line:
-                break  # exit if done with all lines
-            # identifying whether there is a node defined here
-            if line.find("Node number") != -1: #line defines new node
-            	count_node = count_node + 1  # count the node
-                count_atribute = 0  # intitalise attributes of the node (coordinates, radius)
-                node_array=np.append(node_array,np.zeros((1,3)),axis = 0)  # initialise a list of attributes for each node
-                node_array[count_node - 1][count_atribute] = get_final_integer(line)
-            else:
-            	ibeg = line.find("Xj(")
-                if  ibeg != -1:
-                	count_atribute = int(line[ibeg+3]) - 1
-                	node_array[count_node - 1][count_atribute] = get_final_float(line)
-    total_nodes = count_node
-    return total_nodes,node_array
+    print('Image ' + name + ' loaded. Shape: ' + str(Image.shape))
+    return Image
+
+def load_image_nifti(name, numImages):
+
+    nifti_file = nib.load(name)
+    nifti_stack = nifti_file.get_fdata()
+
+    if len(nifti_stack.shape) == 4:
+        new_stack = np.squeeze(nifti_stack,axis=3)
+    Image = np.array(new_stack)
+
+    Image = np.swapaxes(Image,0,1)
+
+
+    # # read in first image + get dimensions to initialize array
+    # with warnings.catch_warnings():
+    #     warnings.simplefilter("ignore")
+    #     im = io.imread(name.format(0))
+    #     skimage.img_as_bool(im)
+    # Image=np.zeros([im.shape[0], im.shape[1], numImages], dtype=bool)
+    # Image[:, :, 0] = im
+    #
+    # # load all slices
+    # for i in range(1, numImages):
+    #     with warnings.catch_warnings():
+    #         warnings.simplefilter("ignore")
+    #         im = io.imread(name.format(i))
+    #         skimage.img_as_bool(im)
+    #     Image[:,:,i]=im
+
+    print('Image ' + name + ' loaded. Shape: ' + str(Image.shape))
+    return Image
 
 ######
-# Finds the integer at the end of a string
-# Inputs: string
-# Outputs: integer
+# Function: Finds Strahler ratio of variable
+#     Inputs: Orders- an array containing the orders of the vascular tree
+#             Factor - an array containing a value for each order of the tree e.g. number of branches at each order
+#     Outputs: Strahler ratio e.g. Rb, Rd for that factor and the R^2 value of the linear fit used to produce it
 ######
 
-def get_final_integer(string):
-	iend=len(string) #get the length of the string
-	ntemp=string.split(":")[1] #get characters after ":" in string
-	if ntemp[0] =='-': #check for negative sign
-		nsign=-1
-	else:
-		nsign=1
-	num = int(ntemp)*nsign #apply sign to int
-	return num
+def find_strahler_ratio(Orders, Factor):
 
-######
-# Finds the float at the end of a string
-# Inputs: string
-# Outputs: float
-######
+    x = Orders
+    yData = np.log(Factor)
+    plt.plot(x, yData, 'k--', linewidth=1.5, label='Data')
 
-def get_final_float(string):
-	iend=len(string) #get the length of the string
-	ntemp=string.split(":")[1] #get characters after ":" in string
-	if ntemp[0] =='-': #check for negative sign
-		nsign=-1
-	else:
-		nsign=1
-	num = float(ntemp)*nsign #apply sign to real
-	return num
+    # fit line to data
+    xFit = np.unique(Orders)
+    yFit = np.poly1d(np.polyfit(x, yData, 1))(np.unique(x))
+    plt.plot(np.unique(x), yFit, label='linear fit')
 
+    # Scaling Coefficient is gradient of the fit
+    grad = (yFit[len(yFit) - 1] - yFit[0]) / (xFit[len(xFit) - 1] - xFit[0])
+    grad=np.abs(grad)
+    grad=np.exp(grad)
 
-######
-# Function: Takes an exnode file from CMGUI and returns an array of nodes and the total number of nodes
-# Inputs:	exnode file containing node information for a tree
-# Outputs:	total_nodes - total number of nodes
-#			nodes - an M x 3 array where nodes=[x_coord, y_coord, z_coord] for M nodes
-######
+    # R^2 value
+    yMean = [mean(yData) for y in yData]
+    r2 = 1 - (sum((yFit - yData) * (yFit - yData)) / sum((yMean - yData) * (yMean - yData)))
 
-def import_exnode_tree(filename):
-    # count nodes for check of correct number for the user, plus use in future arrays
-    count_node = 0
-    # Initialise array of node numbers and values
-    node_array = np.empty((0, 4))
-    # open file
-    with open(filename) as f:
-        # loop through lines of file
-        while 1:
-            line = f.readline()
-            if not line:
-                break  # exit if done with all lines
-            # identifying whether there is a node defined here
-            line_type = str.split(line)[0]
-            if (line_type == 'Node:'):  # line defines new node
-                count_node = count_node + 1  # count the node
-                count_atribute = 0  # intitalise attributes of the node (coordinates)
-                node_array = np.append(node_array, np.zeros((1, 4)),
-                                       axis=0)  # initialise a list of attributes for each node
-                node_array[count_node - 1][count_atribute] = int(str.split(line)[1]) - 1
-            else:
-                line_num = is_float(line_type)  # checking if the line is a number
-                if (line_num):  # it is a number
-                    if not "index" in line:
-                        count_atribute = count_atribute + 1
-                        node_array[count_node - 1][count_atribute] = float(str.split(line)[0])
-    total_nodes = count_node
-    return {'total_nodes': total_nodes, 'nodes': node_array}
+    heading = ('Strahler Ratio = ' + str(grad))
+    plt.title(heading)
+    plt.legend()
+    plt.show()
 
-
-######
-# Function: Takes an exelem file from CMGUI and returns an array of elements and the total number of elements
-# Inputs:	exelem file containing element information for a tree
-# Outputs:	total_elems - total number of elements
-#			elems - an N x 3 array, where elems=[element_number, start_node, end_node] for N elements
-######
-
-def import_exelem_tree(filename):
-    # count element for check of correct number for the user, plus use in future arrays
-    count_el = 0
-    # Initialise array of el numbers and values
-    el_array = np.empty((0, 3), dtype=int)
-    # open file
-    with open(filename) as f:
-        # loop through lines of file
-        while 1:
-            line = f.readline()
-            if not line:
-                break  # exit if done with all lines
-            # identifying whether there is an element defined here
-            line_type = str.split(line)[0]
-
-            if (line_type == 'Element:'):  # line defines new el
-                count_el = count_el + 1  # count the el
-                count_atribute = 0  # intitalise attributes of the el (1st el, 2nd el)
-                el_array = np.append(el_array, np.zeros((1, 3), dtype=int), axis=0)
-                el_array[count_el - 1][count_atribute] = int(str.split(line)[1]) - 1
-            elif (line_type == 'Nodes:'):  # checking if the line is a node
-                count_atribute = count_atribute + 1
-                el_array[count_el - 1][count_atribute] = float(str.split(line)[1]) - 1  # first node of element
-                el_array[count_el - 1][count_atribute + 1] = float(str.split(line)[2]) - 1  # 2nd node of element
-
-    total_el = count_el
-    return {'total_elems': total_el, 'elems': el_array}
-
-def is_float(str):
-    try:
-        num = float(str)
-    except ValueError:
-        return False
-    return True
-
-
-def find_length_elem(elem, nodes):
-    distance = -1 * np.ones(len(elem))
-
-    # go through all elems
-    for ne in range(0, len(elem)):
-        node1 = elem[ne][1]
-        node2 = elem[ne][2]
-        d_x = nodes[node1][1] - nodes[node2][1]
-        d_y = nodes[node1][2] - nodes[node2][2]
-        d_z = nodes[node1][3] - nodes[node2][3]
-        distance[ne] = np.sqrt(d_x ** 2 + d_y ** 2 + d_z ** 2)
-
-    return distance
-
-def find_length_single(nodes,node1,node2):
-
-    d_x = nodes[node1][0] - nodes[node2][0]
-    d_y = nodes[node1][1] - nodes[node2][1]
-    d_z = nodes[node1][2] - nodes[node2][2]
-    distance = np.sqrt(d_x ** 2 + d_y ** 2 + d_z ** 2)
-
-    return distance
-
+    return grad, r2
