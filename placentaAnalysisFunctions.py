@@ -1,6 +1,6 @@
 import numpy as np
 from tabulate import tabulate
-from placentaAnalysis_utilities_new import *
+from placentaAnalysis_utilities import *
 
 ######
 #Contains following functions for placenta analysis:
